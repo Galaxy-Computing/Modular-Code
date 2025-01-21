@@ -1,0 +1,1 @@
+print(module.sysversion().." ".._HOST)

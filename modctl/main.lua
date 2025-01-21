@@ -1,0 +1,166 @@
+-- modctl
+
+if not module.config["modctl"] then
+    module.createConfig("modctl")
+    module.config.modctl.repository = "https://raw.githubusercontent.com/Galaxy-Computing/Modular-Packages/refs/heads/dev/"
+    module.config.modctl.packages = {}
+    module.saveConfig()
+end
+
+if module.config.users[module.currentUser][2] ~= 0 then
+    print("modctl: must be ran as root")
+    return
+end
+
+local tArgs = {...}
+if #tArgs < 1 then
+    print("modctl usage")
+    print("modctl q [module] - get module information")
+    print("modctl r [module] - uninstall module")
+    print("modctl i [file] - install module from package (or install all packages in a directory)")
+    print("modctl ri [module] - install module from remote repository")
+    print("modctl s - sync package database (must do this before remote install)")
+    print("modctl u - update all packages from remote")
+    return
+end
+
+if tArgs[1] == "q" then
+    if tArgs[2] == "*" then
+        for _,v in ipairs(module.list()) do
+            local meta = module.meta(v)
+            print(v)
+            print("- executable: "..tostring(meta[2]))
+            print("- version: "..meta[3])
+        end
+        return
+    end
+    if module.exists(tArgs[2]) then
+        local meta = module.meta(tArgs[2])
+        print(tArgs[2])
+        print("- executable: "..tostring(meta[2]))
+        print("- version: "..meta[3])
+    else print("Module not installed") end
+    return
+end
+
+if tArgs[1] == "r" then
+    if module.exists(tArgs[2]) then
+        local meta = module.meta(tArgs[2])
+        if meta[4] then
+            print("WARNING! This is a system module, uninstalling it could break the system.")
+        end
+        write("Are you sure you want to uninstall module "..tArgs[2].."? (y/N) ")
+        if tArgs[3] then if tArgs[3] == "y" then
+            fs.delete(module.getPath(tArgs[2]))
+            print()
+            print("Done.")
+            return
+        end end
+        if string.lower(read()) == "y" then
+            fs.delete(module.getPath(tArgs[2]))
+            print("Done.")
+            return
+        end
+        print("Canceled.")
+    else print("Module not installed") end
+    return
+end
+
+if tArgs[1] == "i" then
+    if fs.exists(tArgs[2]) then
+        if fs.isDir(tArgs[2]) then
+            for _,package in ipairs(fs.list(tArgs[2])) do
+                shell.run("modctl i "..tArgs[2].."/"..package.." y")
+            end
+        else
+            print("Parsing metadata...")
+            local files = dofile(tArgs[2])
+            local meta = loadstring(files["meta.lua"])()
+            write("Are you sure you want to install module "..meta[1].."? (Y/n) ")
+            if not tArgs[3] then 
+                if string.lower(read()) == "n" then print("Canceled.") return end
+            elseif tArgs[3] ~= "y" then
+                if string.lower(read()) == "n" then print("Canceled.") return end
+            else print() end
+            fs.makeDir(module.getPath(meta[1]))
+            for path,data in pairs(files) do
+                path = module.getPath(meta[1].."/")..path
+                local f = fs.open(path,"w")
+                f.write(data)
+                f.close()
+                print("- "..path)
+            end
+            print("Done.")
+        end
+    else print("File does not exist") end
+    return
+end
+
+if tArgs[1] == "ri" then
+    if tArgs[2] then
+        if not module.config.modctl.packages[tArgs[2]] then
+            print("Module does not exist")
+            return
+        end
+        write("Are you sure you want to install module "..tArgs[2].."? (Y/n) ")
+        if not tArgs[3] then 
+            if string.lower(read()) == "n" then print("Canceled.") return end
+        elseif tArgs[3] ~= "y" then
+            if string.lower(read()) == "n" then print("Canceled.") return end
+        else print() end
+        if not fs.exists("/modular/temp") then fs.makeDir("/modular/temp") end
+        shell.run("wget "..module.config.modctl.repository..tArgs[2]..".mpk /modular/temp/"..tArgs[2]..".mpk")
+        if not fs.exists("/modular/temp/"..tArgs[2]..".mpk") then 
+            print("Download failed") 
+            fs.delete("/modular/temp")
+            return
+        end
+        shell.run("modctl i /modular/temp/"..tArgs[2]..".mpk y")
+        fs.delete("/modular/temp")
+        return
+    else
+        print("You must add a module name")
+        return
+    end
+end
+
+if tArgs[1] == "s" then
+    if not fs.exists("/modular/temp") then fs.makeDir("/modular/temp") end
+    shell.run("wget "..module.config.modctl.repository.."list /modular/temp/list")
+    local f = fs.open("/modular/temp/list","r")
+    module.config.modctl.packages = textutils.unserialise(f.readAll())
+    module.saveConfig()
+    f.close()
+    fs.delete("/modular/temp")
+    print("Done.")
+    return
+end
+
+if tArgs[1] == "u" then
+    local update = {}
+    for name,meta in pairs(module.config.modctl.packages) do
+        if module.exists(name) then
+            if module.version(name) ~= meta[3] then
+                update[#update+1] = name
+            end
+        end
+    end
+    if update == {} then
+        print("All modules are up to date")
+        return
+    end
+    print("The following modules will be updated:")
+    for _,name in ipairs(update) do
+        print("- "..name)
+    end
+    write("Are you sure you want to update "..#update.." modules? (Y/n) ")
+    if not tArgs[2] then 
+        if string.lower(read()) == "n" then print("Canceled.") return end
+    elseif tArgs[2] ~= "y" then
+        if string.lower(read()) == "n" then print("Canceled.") return end
+    else print() end
+    for _,name in ipairs(update) do
+        shell.run("modctl ri "..name.." y")
+    end
+    return
+end
